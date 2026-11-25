@@ -10,6 +10,7 @@ class State:
         self.watch = {}       # mint -> {"added": ts, "source": str, "rug_checked": ts, "rug_fail": [..]}
         self.alerted = {}     # mint -> ts
         self.paused = False
+        self.last_digest = 0  # unix time of the last scheduled digest
         self.alerts = {}      # mint -> [{"target": usd, "dir": "above"|"below", "symbol": str}]
         self.load()
 
@@ -22,6 +23,7 @@ class State:
                 self.alerted = d.get("alerted", {})
                 self.paused = d.get("paused", False)
                 self.alerts = d.get("alerts", {})
+                self.last_digest = d.get("last_digest", 0)
             except (OSError, ValueError):
                 pass
 
@@ -32,7 +34,7 @@ class State:
         tmp = self.path + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"watch": self.watch, "alerted": self.alerted, "paused": self.paused,
-                       "alerts": self.alerts}, f)
+                       "alerts": self.alerts, "last_digest": self.last_digest}, f)
         os.replace(tmp, self.path)
 
     def add(self, mint, source):

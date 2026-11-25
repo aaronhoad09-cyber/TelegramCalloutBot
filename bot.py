@@ -20,6 +20,8 @@ from telegram import Telegram
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
+VERSION = "1.3"   # shown in the startup message so you can confirm which code is deployed
+
 
 class Bot:
     def __init__(self, session):
@@ -137,17 +139,34 @@ class Bot:
         movers = [p for p in movers if checks.mcap_of(p) >= C.MIN_MCAP * 0.5]
         await self.tg.send(formatting.digest(metas, movers), chat_id)
 
-    async def digest_loop(self):
+    def digest_due(self, now):
+        """True when the last scheduled digest was DIGEST_HOURS ago.
+
+        The time of the last digest is saved in state, so restarts and redeploys
+        don't trigger an extra one. On a fresh start the first digest comes one
+        full interval later.
+        """
         if C.DIGEST_HOURS <= 0:
-            return
-        await asyncio.sleep(120)
+            return False
+        last = self.state.last_digest
+        if not last:
+            self.state.last_digest = now
+            self.state.save()
+            return False
+        return now - last >= C.DIGEST_HOURS * 3600
+
+    async def digest_loop(self):
         while True:
-            if not self.state.paused:
-                try:
-                    await self.send_digest()
-                except Exception:
-                    log.exception("digest failed")
-            await asyncio.sleep(C.DIGEST_HOURS * 3600)
+            now = time.time()
+            if self.digest_due(now):
+                self.state.last_digest = now      # record first so a crash can't cause repeats
+                self.state.save()
+                if not self.state.paused:
+                    try:
+                        await self.send_digest()
+                    except Exception:
+                        log.exception("digest failed")
+            await asyncio.sleep(60)
 
     # ------------------------------------------------------------ commands
     async def cmd_check(self, mint, chat):
@@ -213,7 +232,9 @@ class Bot:
                 f"⏰ Price alerts: {sum(len(v) for v in self.state.alerts.values())}\n"
                 f"🔄 Migrations seen: {st['migrations_seen']}\n🚨 Callouts this run: {st['callouts']}\n"
                 f"⏱ Last scan: {last}\n⏸ Paused: {self.state.paused}\n"
-                f"🧠 AI narrative: {'on' if C.ANTHROPIC_API_KEY else 'off'}", chat)
+                f"🧠 AI narrative: {'on' if C.ANTHROPIC_API_KEY else 'off'}\n"
+                f"📊 Digest: {'off' if C.DIGEST_HOURS <= 0 else f'every {C.DIGEST_HOURS:g}h'}\n"
+                f"🏷 Version: v{VERSION}", chat)
         elif cmd == "/check" and len(parts) > 1:
             await self.tg.send("Checking…", chat)
             await self.cmd_check(parts[1], chat)
@@ -262,7 +283,7 @@ class Bot:
                         log.exception("command failed")
 
     async def run(self):
-        await self.tg.send("✅ Callout bot online. Send /help for commands.")
+        await self.tg.send(f"✅ Callout bot online (v{VERSION}). Send /help for commands.")
         await asyncio.gather(
             sources.migration_stream(self.s, self.on_mint, self.status),
             self.scan_loop(),
