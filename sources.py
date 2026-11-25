@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 
 import aiohttp
 
@@ -31,10 +32,14 @@ async def get_json(session, url, timeout=20):
 # ---------------------------------------------------------------- DexScreener
 
 async def dex_pairs_for(session, mints):
-    """Return {mint: [pairs]} for up to 30 mints per request."""
+    """Return {mint: [pairs]}.
+
+    Batches of 10: each coin usually has 2 pairs (bonding curve + PumpSwap) and
+    DexScreener caps how many pairs one response returns, so big batches drop coins.
+    """
     out = {}
-    for i in range(0, len(mints), 30):
-        chunk = mints[i:i + 30]
+    for i in range(0, len(mints), 10):
+        chunk = mints[i:i + 10]
         data = await get_json(session, f"{DEX}/tokens/v1/solana/{','.join(chunk)}")
         for p in data or []:
             m = (p.get("baseToken") or {}).get("address")
@@ -53,6 +58,49 @@ async def latest_profiles(session):
     data = await get_json(session, f"{DEX}/token-profiles/latest/v1") or []
     return [d.get("tokenAddress") for d in data
             if d.get("chainId") == "solana" and d.get("tokenAddress")]
+
+
+# ---------------------------------------------------------------- GeckoTerminal
+
+GECKO = "https://api.geckoterminal.com/api/v2/networks/solana"
+
+
+def _iso_to_ts(s):
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat((s or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def parse_gecko_pools(data, dex="pumpswap"):
+    """[(mint, pool_created_ts)] for pools on `dex` in a GeckoTerminal pools response."""
+    out = []
+    for pool in (data or {}).get("data") or []:
+        rel = pool.get("relationships") or {}
+        if ((rel.get("dex") or {}).get("data") or {}).get("id") != dex:
+            continue
+        base = ((rel.get("base_token") or {}).get("data") or {}).get("id") or ""
+        mint = base.split("_", 1)[1] if base.startswith("solana_") else ""
+        if mint == "So11111111111111111111111111111111111111112":   # SOL as base: take the other side
+            q = ((rel.get("quote_token") or {}).get("data") or {}).get("id") or ""
+            mint = q.split("_", 1)[1] if q.startswith("solana_") else ""
+        if 32 <= len(mint) <= 44:
+            out.append((mint, _iso_to_ts((pool.get("attributes") or {}).get("pool_created_at"))))
+    return out
+
+
+async def gecko_pumpswap_coins(session, pages_new=5, pages_top=3):
+    """Backup + backfill discovery: newest PumpSwap pools and the busiest PumpSwap pools."""
+    found = []
+    for page in range(1, pages_new + 1):
+        found += parse_gecko_pools(await get_json(session, f"{GECKO}/new_pools?page={page}"))
+        await asyncio.sleep(2.5)                         # public API: ~30 requests/minute
+    for page in range(1, pages_top + 1):
+        found += parse_gecko_pools(await get_json(
+            session, f"{GECKO}/dexes/pumpswap/pools?page={page}&sort=h24_volume_usd_desc"))
+        await asyncio.sleep(2.5)
+    return found
 
 
 # ---------------------------------------------------------------- RugCheck
@@ -100,13 +148,18 @@ async def migration_stream(session, on_mint, status):
                 status["stream"] = "connected"
                 log.info("PumpPortal migration stream connected")
                 backoff = 5
+                logged = 0
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                             break
                         continue
+                    if logged < 3:                     # show the format in the logs once per connect
+                        log.info("PumpPortal message: %s", msg.data[:300])
+                        logged += 1
                     mint = parse_migration(msg.data)
                     if mint:
+                        status["last_migration"] = time.time()
                         status["migrations_seen"] = status.get("migrations_seen", 0) + 1
                         await on_mint(mint, "migration")
                     else:

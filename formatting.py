@@ -186,3 +186,48 @@ def alert_hit(mint, pair, a):
             f"Liq {money((pair.get('liquidity') or {}).get('usd'))} · 1h {pct(ch.get('h1'))}\n"
             f"<code>{escape(mint)}</code>\n"
             f'<a href="https://dexscreener.com/solana/{escape(pair.get("pairAddress") or mint)}">DexScreener</a>')
+
+
+# ---------------------------------------------------------------- diagnostics
+
+def reason_key(reason):
+    """Group failure reasons: 'top 10 hold 41.2% > 30%' -> 'top 10 hold too much'."""
+    r = reason.lower()
+    for key, label in (("rugcheck report unavailable", "RugCheck report unavailable"),
+                       ("top 10", "top 10 hold too much"), ("one wallet", "single whale wallet"),
+                       ("insiders", "insiders hold too much"), ("dev holds", "dev holds too much"),
+                       ("holders <", "too few holders"), ("rugcheck score", "RugCheck score too high"),
+                       ("mint authority", "mint not revoked"), ("freeze authority", "freeze not revoked"),
+                       ("rugged", "flagged rugged")):
+        if key in r:
+            return label
+    if r.startswith("danger: "):
+        return "danger: " + reason[8:]
+    return reason
+
+
+def stats(funnel, fail_reasons, status, now):
+    if not funnel:
+        return "📊 No scan has finished yet. Try again in a minute."
+    lm = status.get("last_migration")
+    lines = [
+        "📊 <b>Callout funnel (last scan)</b>",
+        f"👀 Watching: {funnel.get('watched', 0)}",
+        f"⏳ No DexScreener data yet: {funnel.get('no_dex_data', 0)}",
+        f"🪜 Still on bonding curve: {funnel.get('on_bonding_curve', 0)}",
+        f"📉 Below MC floor: {funnel.get('below_mcap', 0)}",
+        f"💧 Low liquidity: {funnel.get('low_liquidity', 0)}",
+        f"✅ Passed market filter: {funnel.get('passed_market', 0)}",
+        f"🛡 Rug-checked this scan: {funnel.get('rug_checked', 0)} "
+        f"(❌ {funnel.get('rug_failed', 0)} · waiting recheck {funnel.get('waiting_recheck', 0)})",
+        f"🚨 Passed everything: {funnel.get('passed_all', 0)}",
+        "",
+        "<b>Discovery</b>",
+        f"PumpPortal stream: {escape(str(status.get('stream')))} · migrations seen {status.get('migrations_seen', 0)}"
+        + (f" · last {_ago(lm, now)} ago" if lm else ""),
+        f"GeckoTerminal coins added: {status.get('gecko_found', 0)}",
+    ]
+    if fail_reasons:
+        lines += ["", "<b>Top rug-check failure reasons (since start)</b>"]
+        lines += [f"• {escape(k)}: {v}" for k, v in fail_reasons.most_common(6)]
+    return "\n".join(lines)

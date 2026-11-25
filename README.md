@@ -49,6 +49,7 @@ If nothing arrives, open the service's **Deployments → View logs**. The usual 
 - `/watchlist`: show only the coins you added with `/watch`, with their market cap and any reasons they failed. Auto-watched migrations keep running in the background without being listed.
 - `/alert <mint> <mcap>`: get a message when the market cap crosses a target, such as `500k`, `1.2m` or `2b`. The bot works out whether that's above or below the current market cap. Each alert fires once, keeps working while callouts are paused, and doesn't expire.
 - `/alert`: list your alerts. `/alert <mint> off` removes the alerts for that coin.
+- `/stats`: show where coins are being filtered out in the last scan (bonding curve, below the market cap floor, low liquidity, failed rug checks) and the most common rug-check failures
 - `/digest`: send the trend digest now
 - `/settings`: show the current filters
 - `/pause`, `/resume`
@@ -61,7 +62,8 @@ Every threshold is an environment variable. `.env.example` lists them all with t
 
 ## Data sources (all free, no keys)
 - **PumpPortal** websocket (`subscribeMigration`): the main feed of new migrations
-- **DexScreener** API: price, market cap, liquidity, volume, socials and trending metas. Its latest token profiles are a backup discovery feed.
+- **GeckoTerminal** API: backup discovery every 5 minutes, covering the newest PumpSwap pools and the busiest PumpSwap pools from the last 24h. It also refills the watchlist after a restart.
+- **DexScreener** API: price, market cap, liquidity, volume, socials and trending metas. Its latest token profiles are another backup discovery feed.
 - **RugCheck** API: authorities, risks, holders and score
 
 ## Running locally (optional)

@@ -277,3 +277,101 @@ def test_digest_schedule_survives_restart(tmp_path, monkeypatch):
 
     monkeypatch.setattr(C, "DIGEST_HOURS", 0)
     assert not b2.digest_due(t0 + 99 * 3600)    # 0 = off
+
+
+# ---------------------------------------------------------------- v1.4
+
+GECKO_SAMPLE = {"data": [
+    {"attributes": {"pool_created_at": "2026-11-25T06:00:00Z"},
+     "relationships": {"dex": {"data": {"id": "pumpswap"}},
+                       "base_token": {"data": {"id": f"solana_{MINT}"}},
+                       "quote_token": {"data": {"id": "solana_So11111111111111111111111111111111111111112"}}}},
+    {"attributes": {"pool_created_at": "2026-11-25T06:00:00Z"},
+     "relationships": {"dex": {"data": {"id": "pump-fun"}},
+                       "base_token": {"data": {"id": "solana_CurveCoin111111111111111111111111111pump"}}}},
+    {"attributes": {"pool_created_at": None},
+     "relationships": {"dex": {"data": {"id": "pumpswap"}},
+                       "base_token": {"data": {"id": "solana_So11111111111111111111111111111111111111112"}},
+                       "quote_token": {"data": {"id": "solana_FlippedCoin1111111111111111111111111pump"}}}},
+]}
+
+
+def test_parse_gecko_pools():
+    got = sources.parse_gecko_pools(GECKO_SAMPLE)
+    assert [m for m, _ in got] == [MINT, "FlippedCoin1111111111111111111111111pump"]
+    assert got[0][1] == 1795586400.0 and got[1][1] is None
+
+
+def test_dex_batches_of_10(monkeypatch):
+    calls = []
+
+    async def fake_get(session, url, timeout=20):
+        calls.append(url)
+        return []
+    monkeypatch.setattr(sources, "get_json", fake_get)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(sources.asyncio, "sleep", lambda *_: real_sleep(0))
+    asyncio.run(sources.dex_pairs_for(None, [f"m{i}" for i in range(25)]))
+    assert len(calls) == 3
+
+
+def test_funnel_and_stats(tmp_path, monkeypatch):
+    import bot as botmod
+    sent = []
+
+    class FakeTG:
+        async def send(self, text, chat_id=None):
+            sent.append(text)
+            return True
+
+    async def fake_pairs(session, mints):
+        return {"curve": [pair(dex="pumpfun")], "small": [pair(mc=30_000)],
+                "thin": [pair(liq=2_000)], "whale": [pair()]}
+
+    async def whale_report(session, mint):
+        return report(topHolders=[{"address": "x", "owner": "y", "pct": 45.0}])
+
+    async def none(*a, **k):
+        return []
+
+    monkeypatch.setattr(sources, "dex_pairs_for", fake_pairs)
+    monkeypatch.setattr(sources, "rug_report", whale_report)
+    monkeypatch.setattr(sources, "latest_profiles", none)
+    monkeypatch.setattr(sources, "gecko_pumpswap_coins", none)
+    monkeypatch.setattr(C, "STATE_FILE", str(tmp_path / "state.json"))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(botmod.asyncio, "sleep", lambda *_: real_sleep(0))
+
+    b = botmod.Bot(session=None)
+    b.tg = FakeTG()
+
+    async def go():
+        for m in ("curve", "small", "thin", "whale", "ghost"):
+            await b.on_mint(m, "migration")
+        await b.scan_once()
+        await b.handle("/stats", "1")
+
+    asyncio.run(go())
+    f = b.funnel
+    assert (f["watched"], f["no_dex_data"], f["on_bonding_curve"], f["below_mcap"],
+            f["low_liquidity"], f["rug_failed"]) == (5, 1, 1, 1, 1, 1)
+    assert "top 10 hold too much: 1" in sent[-1] and "single whale wallet: 1" in sent[-1]
+
+
+def test_gecko_discovery_skips_old(tmp_path, monkeypatch):
+    import bot as botmod
+    import time as _t
+    now = _t.time()
+
+    async def fake_gecko(session):
+        return [("fresh", now - 3600), ("old", now - 48 * 3600), ("unknown", None)]
+
+    async def none(*a, **k):
+        return []
+    monkeypatch.setattr(sources, "gecko_pumpswap_coins", fake_gecko)
+    monkeypatch.setattr(sources, "latest_profiles", none)
+    monkeypatch.setattr(C, "STATE_FILE", str(tmp_path / "state.json"))
+    b = botmod.Bot(session=None)
+    asyncio.run(b.discover())
+    assert set(b.state.watch) == {"fresh", "unknown"}
+    assert abs(b.state.watch["fresh"]["added"] - (now - 3600)) < 1
