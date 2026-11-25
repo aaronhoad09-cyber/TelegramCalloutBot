@@ -142,28 +142,25 @@ def _ago(ts, now):
     return f"{h * 60:.0f}m" if h < 1 else f"{h:.1f}h"
 
 
-def watchlist(watch, last_pairs, now, limit=15):
-    if not watch:
-        return "👀 Watchlist is empty. Add a coin with /watch &lt;CA&gt;."
+def watchlist(watch, last_pairs, now):
+    """Only the coins the user added with /watch (auto-watched migrations stay hidden)."""
     manual = [(m, w) for m, w in watch.items() if w.get("source") == "manual"]
-    auto = [(m, w) for m, w in watch.items() if w.get("source") != "manual"]
+    if not manual:
+        return "👀 Your watchlist is empty. Add a coin with /watch &lt;CA&gt;."
 
     def row(m, w):
         p = last_pairs.get(m) or {}
         sym = escape((p.get("baseToken") or {}).get("symbol") or m[:6] + "…")
-        mc = money(p.get("marketCap") or p.get("fdv")) if p else "not migrated / no data"
+        mc = money(p.get("marketCap") or p.get("fdv")) if p else "not migrated / no data yet"
         line = f"• <b>${sym}</b> · MC {mc} · added {_ago(w['added'], now)} ago\n  <code>{escape(m)}</code>"
         if w.get("rug_fail"):
             line += "\n  ❌ " + escape("; ".join(w["rug_fail"][:2]))
         return line
 
-    lines = [f"👀 <b>Watchlist</b> — {len(watch)} coins"]
-    if manual:
-        lines += ["", f"<b>Added by you ({len(manual)})</b>"] + [row(m, w) for m, w in manual]
-    if auto:
-        auto.sort(key=lambda mw: float((last_pairs.get(mw[0]) or {}).get("marketCap") or 0), reverse=True)
-        lines += ["", f"<b>Auto from migrations ({len(auto)}) — top {min(limit, len(auto))} by MC</b>"]
-        lines += [row(m, w) for m, w in auto[:limit]]
+    manual.sort(key=lambda mw: mw[1]["added"], reverse=True)
+    lines = [f"👀 <b>Your watchlist</b> — {len(manual)} coin{'s' if len(manual) != 1 else ''}"]
+    lines += [row(m, w) for m, w in manual]
+    lines.append("\nRemove with /unwatch &lt;CA&gt; · coins drop off after 24h or once called out")
     return "\n".join(lines)
 
 
