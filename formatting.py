@@ -120,3 +120,72 @@ def digest(metas, movers):
             b = p.get("baseToken") or {}
             lines.append(f"${escape(b.get('symbol') or '?')}: MC {money(p.get('marketCap'))} · 1h {pct((p.get('priceChange') or {}).get('h1'))}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- watchlist & alerts
+
+def parse_money(s):
+    """'500k' -> 500000, '1.2m' -> 1200000, '$2B' -> 2e9, '750,000' -> 750000."""
+    s = (s or "").strip().lower().replace("$", "").replace(",", "")
+    mult = {"k": 1e3, "m": 1e6, "b": 1e9}.get(s[-1:], 1)
+    if mult != 1:
+        s = s[:-1]
+    try:
+        v = float(s) * mult
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def _ago(ts, now):
+    h = (now - ts) / 3600
+    return f"{h * 60:.0f}m" if h < 1 else f"{h:.1f}h"
+
+
+def watchlist(watch, last_pairs, now, limit=15):
+    if not watch:
+        return "👀 Watchlist is empty. Add a coin with /watch &lt;CA&gt;."
+    manual = [(m, w) for m, w in watch.items() if w.get("source") == "manual"]
+    auto = [(m, w) for m, w in watch.items() if w.get("source") != "manual"]
+
+    def row(m, w):
+        p = last_pairs.get(m) or {}
+        sym = escape((p.get("baseToken") or {}).get("symbol") or m[:6] + "…")
+        mc = money(p.get("marketCap") or p.get("fdv")) if p else "not migrated / no data"
+        line = f"• <b>${sym}</b> · MC {mc} · added {_ago(w['added'], now)} ago\n  <code>{escape(m)}</code>"
+        if w.get("rug_fail"):
+            line += "\n  ❌ " + escape("; ".join(w["rug_fail"][:2]))
+        return line
+
+    lines = [f"👀 <b>Watchlist</b> — {len(watch)} coins"]
+    if manual:
+        lines += ["", f"<b>Added by you ({len(manual)})</b>"] + [row(m, w) for m, w in manual]
+    if auto:
+        auto.sort(key=lambda mw: float((last_pairs.get(mw[0]) or {}).get("marketCap") or 0), reverse=True)
+        lines += ["", f"<b>Auto from migrations ({len(auto)}) — top {min(limit, len(auto))} by MC</b>"]
+        lines += [row(m, w) for m, w in auto[:limit]]
+    return "\n".join(lines)
+
+
+def alert_list(alerts):
+    if not alerts:
+        return "⏰ No price alerts. Set one with /alert &lt;CA&gt; 500k"
+    lines = ["⏰ <b>Price alerts</b>"]
+    for m, targets in alerts.items():
+        for a in targets:
+            arrow = "↑ above" if a["dir"] == "above" else "↓ below"
+            lines.append(f"• ${escape(a.get('symbol') or m[:6])} {arrow} {money(a['target'])}\n  <code>{escape(m)}</code>")
+    lines.append("\nRemove with /alert &lt;CA&gt; off")
+    return "\n".join(lines)
+
+
+def alert_hit(mint, pair, a):
+    base = (pair or {}).get("baseToken") or {}
+    sym = escape(base.get("symbol") or a.get("symbol") or "?")
+    verb = "is above" if a["dir"] == "above" else "dropped below"
+    ch = (pair.get("priceChange") or {})
+    return (f"⏰ <b>${sym} {verb} {money(a['target'])}</b>\n"
+            f"MC now <b>{money(pair.get('marketCap') or pair.get('fdv'))}</b> · "
+            f"Liq {money((pair.get('liquidity') or {}).get('usd'))} · 1h {pct(ch.get('h1'))}\n"
+            f"<code>{escape(mint)}</code>\n"
+            f'<a href="https://dexscreener.com/solana/{escape(pair.get("pairAddress") or mint)}">DexScreener</a>')

@@ -10,6 +10,7 @@ class State:
         self.watch = {}       # mint -> {"added": ts, "source": str, "rug_checked": ts, "rug_fail": [..]}
         self.alerted = {}     # mint -> ts
         self.paused = False
+        self.alerts = {}      # mint -> [{"target": usd, "dir": "above"|"below", "symbol": str}]
         self.load()
 
     def load(self):
@@ -20,6 +21,7 @@ class State:
                 self.watch = d.get("watch", {})
                 self.alerted = d.get("alerted", {})
                 self.paused = d.get("paused", False)
+                self.alerts = d.get("alerts", {})
             except (OSError, ValueError):
                 pass
 
@@ -29,7 +31,8 @@ class State:
             os.makedirs(d, exist_ok=True)
         tmp = self.path + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"watch": self.watch, "alerted": self.alerted, "paused": self.paused}, f)
+            json.dump({"watch": self.watch, "alerted": self.alerted, "paused": self.paused,
+                       "alerts": self.alerts}, f)
         os.replace(tmp, self.path)
 
     def add(self, mint, source):

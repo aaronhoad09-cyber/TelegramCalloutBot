@@ -44,7 +44,11 @@ If nothing arrives, open the service's **Deployments → View logs**. The usual 
 ## Commands
 - `/status`: migration stream status, how many coins are being watched, and the number of callouts
 - `/check <mint>`: run every filter on any coin and see which checks it passes or fails
-- `/watch <mint>`: add a coin to the watchlist yourself
+- `/watch <mint>`: watch a coin for 24h. You get a callout if it passes every filter.
+- `/unwatch <mint>`: take a coin off the watchlist
+- `/watchlist`: show the coins you added and the top auto-watched coins by market cap, with any reasons they failed
+- `/alert <mint> <mcap>`: get a message when the market cap crosses a target, such as `500k`, `1.2m` or `2b`. The bot works out whether that's above or below the current market cap. Each alert fires once, keeps working while callouts are paused, and doesn't expire.
+- `/alert`: list your alerts. `/alert <mint> off` removes the alerts for that coin.
 - `/digest`: send the trend digest now
 - `/settings`: show the current filters
 - `/pause`, `/resume`
